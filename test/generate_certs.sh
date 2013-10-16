@@ -10,7 +10,7 @@
 #
 # NB: This will cause the following files to be overwritten if they are in
 # the output directory:
-#  cert8.db, key3.db, secmod.db, ca.pem, intermediate.pem, ee.pem
+#  cert8.db, key3.db, secmod.db, {many}.pem
 set -x
 set -e
 
@@ -53,7 +53,7 @@ if [ -f "$OUTPUT_DIR/cert8.db" -o -f "$OUTPUT_DIR/key3.db" -o -f "$OUTPUT_DIR/se
 fi
 $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -N -f $PASSWORD_FILE
 
-COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE"
+COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE -g 2048"
 
 function make_CA {
   CA_RESPONSES="y\n0\ny"
@@ -69,24 +69,26 @@ function make_CA {
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
 }
 
-function make_intermediate {
-  INTERMEDIATE_RESPONSES="y\n0\ny"
+function make_INT {
+  INT_RESPONSES="y\n0\ny"
   NICKNAME="${1}"
   SUBJECT="${2}"
-  PEMFILE="${3}"
+  CA="${3}"
+  PEMFILE="${4}"
 
-  echo -e "$CA_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
-                                                   -n $NICKNAME \
-                                                   -s "$SUBJECT" \
-                                                   -t ",," \
-                                                   -x $COMMON_ARGS
+  echo -e "$INT_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
+                                                    -n $NICKNAME \
+                                                    -s "$SUBJECT" \
+                                                    -c "$CA" \
+                                                    -t ",," \
+                                                    -x $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
 }
 
 SERIALNO=1
 
-function make_cert {
-  CERT_RESPONSES="n\n\ny"
+function make_EE {
+  EE_RESPONSES="n\n\ny"
   NICKNAME="${1}"
   SUBJECT="${2}"
   CA="${3}"
@@ -96,7 +98,7 @@ function make_cert {
     SUBJECT_ALT_NAME="-8 $SUBJECT_ALT_NAME"
   fi
 
-  echo -e "$CERT_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
+  echo -e "$EE_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                      -n $NICKNAME \
                                                      -s "$SUBJECT" \
                                                      $SUBJECT_ALT_NAME \
@@ -108,8 +110,8 @@ function make_cert {
   SERIALNO=$(($SERIALNO + 1))
 }
 
-make_CA testCA 'CN=Test CA' ca.pem
-make_intermediate intermediate 'CN=Test Intermediate CA' intermediate.pem
-make_cert localhostAndExampleCom 'CN=Test End-entity' intermediate ee.pem "localhost,*.example.com"
+make_CA goodCA 'CN=Good CA,O=Good Organization,C=US' goodCA.pem
+make_INT goodINT 'CN=Good Intermediate CA,O=Good Organization,C=US' goodCA goodINT.pem 
+make_EE goodEE 'CN=good.example.com' goodINT goodEE.pem "good.example.com"
 
 cleanup
