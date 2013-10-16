@@ -45,8 +45,8 @@ char *read_file(const char *filename, size_t *length) {
   return data;
 }
 
-static const char CERTIFICATE_HEADER[] = "-----BEGIN CERTIFICATE-----\r\n";
-static const char CERTIFICATE_FOOTER[] = "-----END CERTIFICATE-----\r\n";
+static const char CERTIFICATE_HEADER[] = "-----BEGIN CERTIFICATE-----";
+static const char CERTIFICATE_FOOTER[] = "-----END CERTIFICATE-----";
 
 CERTCertificate *read_certificate_from_file(const char *filename) {
   size_t length = 0; // includes trailing \0
@@ -58,10 +58,17 @@ CERTCertificate *read_certificate_from_file(const char *filename) {
   if (strncmp(CERTIFICATE_HEADER, data, strlen(CERTIFICATE_HEADER)) == 0) {
     ptr += strlen(CERTIFICATE_HEADER);
   }
-  if (strncmp(CERTIFICATE_FOOTER,
-              data + length - strlen(CERTIFICATE_FOOTER) - 1,
-              strlen(CERTIFICATE_FOOTER)) == 0) {
-    data[length - strlen(CERTIFICATE_FOOTER) - 1] = 0;
+  while (ptr < data + length && (*ptr == '\r' || *ptr == '\n')) {
+    ptr++;
+  }
+  char *endPtr = data + length - 1;
+  while (endPtr > ptr && (*endPtr == '\r' || *endPtr == '\n')) {
+    endPtr--;
+  }
+  endPtr -= strlen(CERTIFICATE_FOOTER) + 1;
+  if (endPtr > ptr && strncmp(CERTIFICATE_FOOTER, endPtr,
+                              strlen(CERTIFICATE_FOOTER)) == 0) {
+    *endPtr = 0;
   }
   CERTCertificate *cert = CERT_ConvertAndDecodeCertificate(ptr);
   if (!cert) {
