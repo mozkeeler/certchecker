@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <nss.h>
-#include <nss/seccomon.h>
 #include <nss/cert.h>
-#include <nss/secport.h>
+#include <nss/keyhi.h>
+#include <nss/seccomon.h>
+#include <nss/secder.h>
 #include <nss/secerr.h>
+#include <nss/secport.h>
 
 char *read_file(const char *filename, size_t *length) {
   FILE *fp = fopen(filename, "r");
@@ -70,6 +72,97 @@ CERTCertificate *read_certificate_from_file(const char *filename) {
   return cert;
 }
 
+const char *alg_tag_to_string(SECOidTag *tag) {
+  switch (*tag) {
+    case SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION:
+      return "SHA1";
+    case SEC_OID_PKCS1_SHA256_WITH_RSA_ENCRYPTION:
+      return "SHA256";
+    case SEC_OID_PKCS1_SHA384_WITH_RSA_ENCRYPTION:
+      return "SHA384";
+    case SEC_OID_PKCS1_SHA512_WITH_RSA_ENCRYPTION:
+      return "SHA512";
+    default:
+      return "unhandled OID tag";
+  }
+}
+
+void check_key_requirements(CERTCertificate *cert) {
+  PRTime notAfter;
+  SECStatus status = DER_DecodeTimeChoice(&notAfter, &cert->validity.notAfter);
+  if (status != SECSuccess) {
+    fprintf(stderr, "error decoding not after value");
+    return;
+  }
+
+  PRTime cutoff;
+  PRStatus rv = PR_ParseTimeString("31-DEC-2013 11:59 PM", PR_TRUE, &cutoff);
+  if (rv != PR_SUCCESS) {
+    fprintf(stderr, "Error parsing time string. This shouldn't happen.\n");
+    exit(1);
+  }
+
+  SECOidTag algOIDTag = SECOID_FindOIDTag(&cert->signature.algorithm);
+  if (algOIDTag != SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION &&
+      algOIDTag != SEC_OID_PKCS1_SHA256_WITH_RSA_ENCRYPTION &&
+      algOIDTag != SEC_OID_PKCS1_SHA384_WITH_RSA_ENCRYPTION &&
+      algOIDTag != SEC_OID_PKCS1_SHA512_WITH_RSA_ENCRYPTION) {
+    fprintf(stderr, "BR Appendix A(3): digest algorithm must be SHA1, SHA-256, "
+                    "SHA-384 or SHA-512 (is %s (%d))\n",
+                    alg_tag_to_string(&algOIDTag), (int)algOIDTag);
+  } else {
+    fprintf(stdout, "BR Appendix A(3): digest algorithm must be SHA1, SHA-256, "
+                    "SHA-384 or SHA-512 (is %s)\n",
+                    alg_tag_to_string(&algOIDTag));
+  }
+
+  SECKEYPublicKey *key = CERT_ExtractPublicKey(cert);
+  if (!key) {
+    fprintf(stderr, "no public key in certificate?");
+    return;
+  }
+
+  if (key->keyType != rsaKey) {
+    fprintf(stderr, "Currently, only RSA keys are supported by this tool.\n");
+    return;
+  }
+
+  unsigned strengthInBits = SECKEY_PublicKeyStrengthInBits(key);
+  unsigned minimumStrength = 2048;
+  const char *minimumStrengthStr = "2048";
+  if (notAfter < cutoff) {
+    minimumStrength = 1024;
+    minimumStrengthStr = "1024";
+  }
+
+  if (strengthInBits < minimumStrength) {
+    fprintf(stderr, "BR Appendix A(3): key modulus must be a minimum of %s "
+                    "bits (is %u bits)\n", minimumStrengthStr,
+                    strengthInBits);
+  } else {
+    fprintf(stdout, "BR Appendix A(3): key modulus must be a minimum of %s "
+                    "bits (is %u bits)\n", minimumStrengthStr,
+                    strengthInBits);
+  }
+
+  //key->u.rsa.modulus
+  // TODO: need arbitrary length integer arithmetic library to do this right
+  long pubExp = DER_GetInteger(&key->u.rsa.publicExponent);
+  if (pubExp == -1) {
+    fprintf(stderr, "Error decoding public exponent: %d\n", PORT_GetError());
+  } else {
+    if (pubExp < 3 || pubExp % 2 == 0) {
+      fprintf(stderr, "BR Appendix A(4): public exponent must be an odd "
+                      "number equal to 3 or more. It should be at least "
+                      "65537 (it is %ld)\n", pubExp);
+    } else {
+      fprintf(stdout, "BR Appendix A(4): public exponent must be an odd "
+                      "number equal to 3 or more. It should be at least "
+                      "65537 (it is %ld)\n", pubExp);
+    }
+  }
+}
+
 void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.1.1 - issuer:commonName optional
   // BR #9.1.2 - issuer:domainComponent optional (if present, must include
@@ -133,6 +226,8 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.2.6
   // BR #9.2.7
   // BR #9.2.8
+
+  check_key_requirements(cert);
 }
 
 int main(int argc, const char *argv[]) {
