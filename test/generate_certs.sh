@@ -53,20 +53,26 @@ if [ -f "$OUTPUT_DIR/cert8.db" -o -f "$OUTPUT_DIR/key3.db" -o -f "$OUTPUT_DIR/se
 fi
 $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -N -f $PASSWORD_FILE
 
-COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE -g 2048"
+COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE"
+DEFAULT_KEY_SIZE=2048
 
 function make_CA {
   CA_RESPONSES="y\n0\ny"
   NICKNAME="${1}"
   SUBJECT="${2}"
   PEMFILE="${3}"
+  if [ -z "$KEY_SIZE" ]; then
+    KEY_SIZE="$DEFAULT_KEY_SIZE"
+  fi
 
   echo -e "$CA_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                    -n $NICKNAME \
                                                    -s "$SUBJECT" \
                                                    -t "CT,," \
+                                                   -g "$KEY_SIZE" \
                                                    -x $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
+  unset KEY_SIZE
 }
 
 function make_INT {
@@ -75,14 +81,19 @@ function make_INT {
   SUBJECT="${2}"
   CA="${3}"
   PEMFILE="${4}"
+  if [ -z "$KEY_SIZE" ]; then
+    KEY_SIZE="$DEFAULT_KEY_SIZE"
+  fi
 
   echo -e "$INT_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                     -n $NICKNAME \
                                                     -s "$SUBJECT" \
                                                     -c "$CA" \
                                                     -t ",," \
+                                                    -g "$KEY_SIZE" \
                                                     -x $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
+  unset KEY_SIZE
 }
 
 SERIALNO=1
@@ -97,6 +108,9 @@ function make_EE {
   if [ -n "$SUBJECT_ALT_NAME" ]; then
     SUBJECT_ALT_NAME="-8 $SUBJECT_ALT_NAME"
   fi
+  if [ -z "$KEY_SIZE" ]; then
+    KEY_SIZE="$DEFAULT_KEY_SIZE"
+  fi
 
   echo -e "$EE_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                      -n $NICKNAME \
@@ -105,13 +119,18 @@ function make_EE {
                                                      -c $CA \
                                                      -t ",," \
                                                      -m $SERIALNO \
+                                                     -g "$KEY_SIZE" \
                                                      $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
   SERIALNO=$(($SERIALNO + 1))
+  unset KEY_SIZE
 }
 
 make_CA goodCA 'CN=Good CA,O=Good Organization,C=US' goodCA.pem
 make_INT goodINT 'CN=Good Intermediate CA,O=Good Organization,C=US' goodCA goodINT.pem 
+make_INT badINT 'CN=Bad Intermediate CA' goodCA badINT.pem 
 make_EE goodEE 'CN=good.example.com' goodINT goodEE.pem "good.example.com"
+KEY_SIZE=1024
+make_EE everythingWrongEE 'CN=everythingWrong.example.com' badINT everythingWrongEE.pem
 
 cleanup
