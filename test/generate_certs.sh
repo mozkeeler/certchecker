@@ -129,7 +129,7 @@ function make_EE {
 make_CA goodCA 'CN=Good CA,O=Good Organization,C=US' goodCA.pem
 make_INT goodINT 'CN=Good Intermediate CA,O=Good Organization,C=US' goodCA goodINT.pem 
 make_INT badINT 'CN=Bad Intermediate CA' goodCA badINT.pem 
-make_EE goodEE 'CN=good.example.com' goodINT goodEE.pem "good.example.com"
+make_EE goodEE 'O=Good EE Organization' goodINT goodEE.pem "good.example.com"
 make_EE altnamesEE 'CN=good2.example.com' goodINT altnamesEE.pem "good2.example.com,good2.example.org,127.0.0.1"
 make_EE altnameMismatchEE 'CN=mismatch.example.com' goodINT altnameMismatchEE.pem "mismatch.example.org"
 KEY_SIZE=1024

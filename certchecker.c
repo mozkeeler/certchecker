@@ -6,6 +6,7 @@
 #include <nss/secder.h>
 #include <nss/secerr.h>
 #include <nss/secport.h>
+#include <prprf.h>
 
 #include "nss_private.h"
 
@@ -180,6 +181,54 @@ void print_general_name(CERTGeneralName *name) {
   free(tmp);
 }
 
+void hexdump(const unsigned char *data, unsigned length) {
+  unsigned rows = length / 16;
+  unsigned remainder = length % 16;
+  unsigned i = 0;
+  for (; i < rows; i++) {
+    unsigned j = 0;
+    for (; j < 8; j++) {
+      fprintf(stdout, "%02hhx ", data[16*i + j]);
+    }
+    fprintf(stdout, " ");
+    for (; j < 16; j++) {
+      fprintf(stdout, "%02hhx ", data[16*i + j]);
+    }
+    fprintf(stdout, "\n");
+  }
+  unsigned j = 0;
+  for (; j < 8 && j < remainder; j++) {
+    fprintf(stdout, "%02hhx ", data[16*i + j]);
+  }
+  fprintf(stdout, " ");
+  for (; j < 16 && j < remainder; j++) {
+    fprintf(stdout, "%02hhx ", data[16*i + j]);
+  }
+  fprintf(stdout, "\n");
+}
+
+int check_subject_for(CERTCertificate *cert) {
+  int count = 0;
+  char *organizationName = CERT_GetOrgName(&cert->subject);
+  if (organizationName) {
+    count++;
+    PORT_Free(organizationName);
+  }
+  // TODO: street address
+  char *localityName = CERT_GetLocalityName(&cert->subject);
+  if (localityName) {
+    count++;
+    PORT_Free(localityName);
+  }
+  char *stateOrProvinceName = CERT_GetStateName(&cert->subject);
+  if (stateOrProvinceName) {
+    count++;
+    PORT_Free(stateOrProvinceName);
+  }
+  // TODO: postal code
+  return count;
+}
+
 void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.1.1 - issuer:commonName optional
   // BR #9.1.2 - issuer:domainComponent optional (if present, must include
@@ -279,6 +328,57 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.2.7
   // BR #9.2.8
 
+  // BR #9.3.1 - If the Certificate asserts the policy identifier of
+  // 2.23.140.1.2.1, then it MUST NOT include organizationName,
+  // streetAddress, localityName, stateOrProvinceName, or postalCode
+  // in the Subject field.
+  // If the Certificate asserts the policy identifier of 2.23.140.1.2.2,
+  // then it MUST also include organizationName, localityName,
+  // stateOrProvinceName (if applicable), and countryName in the Subject field.
+  SECItem policyItem;
+  CERTCertificatePolicies *policies;
+  status = CERT_FindCertExtension(cert, SEC_OID_X509_CERTIFICATE_POLICIES,
+                                  &policyItem);
+  if (status != SECSuccess) {
+    fprintf(stdout, "BR #9.3.1 - no policies found. Not applicable.\n");
+  } else {
+    policies = CERT_DecodeCertificatePoliciesExtension(&policyItem);
+    if (!policies) {
+      fprintf(stderr, "error decoding certificate policies extension\n");
+    } else {
+      CERTPolicyInfo **policyInfos = policies->policyInfos;
+      while (*policyInfos != NULL) {
+        char *oidString = CERT_GetOidString(&(*policyInfos)->policyID);
+        if (strcmp(oidString, "OID.2.23.140.1.2.1") == 0) {
+          fprintf(stdout, "BR #9.3.1 - found policy %s (must not include "
+                  "organizationName, streetAddress, localityName, "
+                  "stateOrProvinceName, or postalCode in the Subject field) ",
+                  oidString);
+          int fieldsPresent = check_subject_for(cert);
+          if (fieldsPresent > 0) {
+            fprintf(stderr, "violated!\n");
+          } else {
+            fprintf(stdout, "not present\n");
+          }
+        } else if (strcmp(oidString, "OID.2.23.140.1.2.2") == 0) {
+          fprintf(stdout, "BR #9.3.1 - found policy %s (must include "
+                  "organizationName, streetAddress, localityName, "
+                  "stateOrProvinceName, and postalCode in the Subject field)\n",
+                  oidString);
+          int fieldsPresent = check_subject_for(cert);
+          if (fieldsPresent != 3) { // TODO: will be 5
+            fprintf(stderr, " violated!\n");
+          } else {
+            fprintf(stderr, " all present\n");
+          }
+        }
+        PR_smprintf_free(oidString);
+        policyInfos++;
+      }
+      CERT_DestroyCertificatePoliciesExtension(policies);
+    }
+    PORT_Free(policyItem.data);
+  }
   check_key_requirements(cert);
 }
 
