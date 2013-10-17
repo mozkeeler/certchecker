@@ -7,6 +7,8 @@
 #include <nss/secerr.h>
 #include <nss/secport.h>
 
+#include "nss_private.h"
+
 char *read_file(const char *filename, size_t *length) {
   FILE *fp = fopen(filename, "r");
   if (!fp) {
@@ -61,11 +63,11 @@ CERTCertificate *read_certificate_from_file(const char *filename) {
   while (ptr < data + length && (*ptr == '\r' || *ptr == '\n')) {
     ptr++;
   }
-  char *endPtr = data + length - 1;
+  char *endPtr = data + length - 2;
   while (endPtr > ptr && (*endPtr == '\r' || *endPtr == '\n')) {
     endPtr--;
   }
-  endPtr -= strlen(CERTIFICATE_FOOTER) + 1;
+  endPtr -= strlen(CERTIFICATE_FOOTER) - 1;
   if (endPtr > ptr && strncmp(CERTIFICATE_FOOTER, endPtr,
                               strlen(CERTIFICATE_FOOTER)) == 0) {
     *endPtr = 0;
@@ -170,6 +172,14 @@ void check_key_requirements(CERTCertificate *cert) {
   }
 }
 
+void print_general_name(CERTGeneralName *name) {
+  char *tmp = malloc(name->name.other.len + 1);
+  memcpy(tmp, name->name.other.data, name->name.other.len);
+  tmp[name->name.other.len] = 0;
+  fprintf(stdout, "%s", tmp);
+  free(tmp);
+}
+
 void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.1.1 - issuer:commonName optional
   // BR #9.1.2 - issuer:domainComponent optional (if present, must include
@@ -201,19 +211,33 @@ void check_baseline_requirements(CERTCertificate *cert) {
   SECItem subjectAltName;
   SECStatus status = CERT_FindCertExtension(cert, SEC_OID_X509_SUBJECT_ALT_NAME,
                                             &subjectAltName);
+  CERTGeneralName *nameList = NULL;
   if (status != SECSuccess) {
     fprintf(stderr, "BR #9.2.1 (extensions:subjectAltName contains at least "
                     "one entry) violated!\n");
   } else {
     PLArenaPool *arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
-    CERTGeneralName *nameList = CERT_DecodeAltNameExtension(arena,
-                                                            &subjectAltName);
+    nameList = CERT_DecodeAltNameExtension(arena, &subjectAltName);
     if (!nameList) {
       fprintf(stderr, "BR #9.2.1 (extensions:subjectAltName contains at least "
                       "one entry) violated!\n");
     } else {
       fprintf(stdout, "BR #9.2.1 (extensions:subjectAltName contains at least "
                       "one entry): true\n");
+      CERTGeneralName *first = nameList;
+      do {
+        if (nameList->type != certDNSName && nameList->type != certIPAddress) {
+          fprintf(stderr, "BR #9.2.1 (each extensions:subjectAltName entry "
+                          "must be a DNS name or an IP address: is %d)\n",
+                          nameList->type); // see CERTGeneralNameType
+        } else {
+          fprintf(stdout, "BR #9.2.1 (extensions:subjectAltName found ");
+          print_general_name(nameList);
+          fprintf(stdout, ")\n");
+        }
+        nameList = CERT_GetNextGeneralName(nameList);
+      } while (nameList != first);
+      nameList = first;
     }
     SECITEM_FreeItem(&subjectAltName, PR_FALSE);
     PORT_FreeArena(arena, PR_FALSE);
@@ -222,7 +246,28 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.2.2 - subject:commonName deprecated (if present, must contain a
   // single IP address or FQDN that is one of the values contained in the
   // subjectAltName extension
-  // (TODO)
+  char *commonName = CERT_GetCommonName(&cert->subject);
+  if (commonName) {
+    fprintf(stderr, "BR #9.2.2 (subject:commonName is deprecated: %s)\n",
+            commonName);
+    status = cert_VerifySubjectAltName(cert, commonName);
+    if (status != SECSuccess) {
+      fprintf(stderr, "BR #9.2.2 (subject:commonName if present, must match "
+                      "one of the values in the subjectAltName extension");
+      if (nameList) {
+        fprintf(stderr, ": couldn't find a match)\n");
+      } else {
+        fprintf(stderr, ": subjectAltName extension not present)\n");
+      }
+    } else {
+      fprintf(stdout, "BR #9.2.2 (subject:commonName matches one of the values "
+                      "in the subjectAltName extension)\n");
+    }
+    free(commonName);
+  } else {
+    fprintf(stdout, "BR #9.2.2 (subject:commonName is deprecated: "
+            "not present)\n");
+  }
 
   // BR #9.2.3 - subject:domainComponent optional (if present...)
   // (TODO)

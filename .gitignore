@@ -16,6 +16,14 @@
 *.exe
 *.out
 *.app
+certchecker
 
 # vim
 *.sw?
+
+# generated test files
+*.db
+*.pem
+
+# misc
+*.pdf
