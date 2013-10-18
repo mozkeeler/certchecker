@@ -321,7 +321,7 @@ void check_baseline_requirements(CERTCertificate *cert) {
         fprintf(stdout, "PASS\n");
       }
       do {
-        if (nameList->type != certDNSName && nameList->type != certIPAddress) {
+        if (nameList->type == certDNSName || nameList->type == certIPAddress) {
           fprintf(stdout, "extensions:subjectAltName: found ");
           print_general_name(nameList);
           fprintf(stdout, "\n");

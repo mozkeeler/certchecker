@@ -53,26 +53,20 @@ if [ -f "$OUTPUT_DIR/cert8.db" -o -f "$OUTPUT_DIR/key3.db" -o -f "$OUTPUT_DIR/se
 fi
 $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -N -f $PASSWORD_FILE
 
-COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE"
-DEFAULT_KEY_SIZE=2048
+COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE -g 2048"
 
 function make_CA {
   CA_RESPONSES="y\n0\ny"
   NICKNAME="${1}"
   SUBJECT="${2}"
   PEMFILE="${3}"
-  if [ -z "$KEY_SIZE" ]; then
-    KEY_SIZE="$DEFAULT_KEY_SIZE"
-  fi
 
   echo -e "$CA_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                    -n $NICKNAME \
                                                    -s "$SUBJECT" \
                                                    -t "CT,," \
-                                                   -g "$KEY_SIZE" \
                                                    -x $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
-  unset KEY_SIZE
 }
 
 function make_INT {
@@ -81,19 +75,14 @@ function make_INT {
   SUBJECT="${2}"
   CA="${3}"
   PEMFILE="${4}"
-  if [ -z "$KEY_SIZE" ]; then
-    KEY_SIZE="$DEFAULT_KEY_SIZE"
-  fi
 
   echo -e "$INT_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
                                                     -n $NICKNAME \
                                                     -s "$SUBJECT" \
                                                     -c "$CA" \
                                                     -t ",," \
-                                                    -g "$KEY_SIZE" \
                                                     -x $COMMON_ARGS
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
-  unset KEY_SIZE
 }
 
 SERIALNO=1
@@ -104,35 +93,38 @@ function make_EE {
   SUBJECT="${2}"
   CA="${3}"
   PEMFILE="${4}"
-  SUBJECT_ALT_NAME="${5}"
-  if [ -n "$SUBJECT_ALT_NAME" ]; then
-    SUBJECT_ALT_NAME="-8 $SUBJECT_ALT_NAME"
-  fi
-  if [ -z "$KEY_SIZE" ]; then
-    KEY_SIZE="$DEFAULT_KEY_SIZE"
-  fi
+  EXTRA="${5}"
 
   echo -e "$EE_RESPONSES" | $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -S \
-                                                     -n $NICKNAME \
-                                                     -s "$SUBJECT" \
-                                                     $SUBJECT_ALT_NAME \
-                                                     -c $CA \
-                                                     -t ",," \
-                                                     -m $SERIALNO \
-                                                     -g "$KEY_SIZE" \
-                                                     $COMMON_ARGS
+                                                   -n $NICKNAME \
+                                                   -s "$SUBJECT" \
+                                                   -c $CA \
+                                                   -t ",," \
+                                                   -m $SERIALNO \
+                                                   $COMMON_ARGS \
+                                                   $EXTRA
   $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n $NICKNAME -a > $OUTPUT_DIR/$PEMFILE
   SERIALNO=$(($SERIALNO + 1))
-  unset KEY_SIZE
 }
 
 make_CA goodCA 'CN=Good CA,O=Good Organization,C=US' goodCA.pem
 make_INT goodINT 'CN=Good Intermediate CA,O=Good Organization,C=US' goodCA goodINT.pem 
 make_INT badINT 'CN=Bad Intermediate CA' goodCA badINT.pem 
-make_EE goodEE 'O=Good EE Organization' goodINT goodEE.pem "good.example.com"
-make_EE altnamesEE 'CN=good2.example.com' goodINT altnamesEE.pem "good2.example.com,good2.example.org,127.0.0.1"
-make_EE altnameMismatchEE 'CN=mismatch.example.com' goodINT altnameMismatchEE.pem "mismatch.example.org"
-KEY_SIZE=1024
-make_EE everythingWrongEE 'CN=everythingWrong.example.com' badINT everythingWrongEE.pem
+make_EE goodEE 'O=Good EE Organization' goodINT goodEE.pem "-8 good.example.com"
+make_EE altnamesEE 'CN=good2.example.com' goodINT altnamesEE.pem "-8 good2.example.com,good2.example.org,127.0.0.1"
+make_EE altnameMismatchEE 'CN=mismatch.example.com' goodINT altnameMismatchEE.pem "-8 mismatch.example.org"
 
+echo -e "n\n\ny\n2.23.140.1.2.2\n2\n\n\n\n\n" | $RUN_MOZILLA $CERTUTIL -S \
+                                                             -d $OUTPUT_DIR \
+                                                             -n everythingWrongEE \
+                                                             -s 'CN=everythingWrong.example.com' \
+                                                             -c badINT \
+                                                             -t ",," \
+                                                             -m 0 \
+                                                             $COMMON_ARGS \
+                                                             -g 1024 \
+                                                             -y 3 \
+                                                             --extCP
+
+$RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -L -n everythingWrongEE -a > $OUTPUT_DIR/everythingWrongEE.pem
 cleanup
