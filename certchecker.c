@@ -97,11 +97,44 @@ const char *alg_tag_to_string(SECOidTag *tag) {
   }
 }
 
+int certificate_has_policy(CERTCertificate *cert, const char *policy_string) {
+  SECItem policyItem;
+  SECStatus status = CERT_FindCertExtension(cert,
+                                            SEC_OID_X509_CERTIFICATE_POLICIES,
+                                            &policyItem);
+  if (status != SECSuccess) {
+    return 0;
+  }
+
+  CERTCertificatePolicies *policies;
+  policies = CERT_DecodeCertificatePoliciesExtension(&policyItem);
+  if (!policies) {
+    fprintf(stderr, "error decoding certificate policies extension\n");
+    PORT_Free(policyItem.data);
+    return 0;
+  }
+
+  int retval = 0;
+  CERTPolicyInfo **policyInfos = policies->policyInfos;
+  while (*policyInfos != NULL) {
+    char *oidString = CERT_GetOidString(&(*policyInfos)->policyID);
+    if (strcmp(oidString, policy_string) == 0) {
+      retval = 1;
+    }
+    PR_smprintf_free(oidString);
+    policyInfos++;
+  }
+
+  CERT_DestroyCertificatePoliciesExtension(policies);
+  PORT_Free(policyItem.data);
+  return retval;
+}
+
 void check_key_requirements(CERTCertificate *cert) {
   PRTime notAfter;
   SECStatus status = DER_DecodeTimeChoice(&notAfter, &cert->validity.notAfter);
   if (status != SECSuccess) {
-    fprintf(stderr, "error decoding not after value");
+    fprintf(stdout, "error decoding not after value\n");
     return;
   }
 
@@ -112,18 +145,17 @@ void check_key_requirements(CERTCertificate *cert) {
     exit(1);
   }
 
+  fprintf(stdout, "BR Appendix A(3): digest algorithm must be SHA1, SHA-256, "
+                  "SHA-384 or SHA-512: ");
   SECOidTag algOIDTag = SECOID_FindOIDTag(&cert->signature.algorithm);
   if (algOIDTag != SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION &&
       algOIDTag != SEC_OID_PKCS1_SHA256_WITH_RSA_ENCRYPTION &&
       algOIDTag != SEC_OID_PKCS1_SHA384_WITH_RSA_ENCRYPTION &&
       algOIDTag != SEC_OID_PKCS1_SHA512_WITH_RSA_ENCRYPTION) {
-    fprintf(stderr, "BR Appendix A(3): digest algorithm must be SHA1, SHA-256, "
-                    "SHA-384 or SHA-512 (is %s (%d))\n",
-                    alg_tag_to_string(&algOIDTag), (int)algOIDTag);
+    fprintf(stdout, "FAIL: is %s (%d)\n", alg_tag_to_string(&algOIDTag),
+            (int)algOIDTag);
   } else {
-    fprintf(stdout, "BR Appendix A(3): digest algorithm must be SHA1, SHA-256, "
-                    "SHA-384 or SHA-512 (is %s)\n",
-                    alg_tag_to_string(&algOIDTag));
+    fprintf(stdout, "PASS: is %s\n", alg_tag_to_string(&algOIDTag));
   }
 
   SECKEYPublicKey *key = CERT_ExtractPublicKey(cert);
@@ -145,30 +177,28 @@ void check_key_requirements(CERTCertificate *cert) {
     minimumStrengthStr = "1024";
   }
 
+  fprintf(stdout, "BR Appendix A(3): key modulus must be a minimum of %s "
+                  "bits: ", minimumStrengthStr);
   if (strengthInBits < minimumStrength) {
-    fprintf(stderr, "BR Appendix A(3): key modulus must be a minimum of %s "
-                    "bits (is %u bits)\n", minimumStrengthStr,
-                    strengthInBits);
+    fprintf(stdout, "FAIL: is %u\n", strengthInBits);
   } else {
-    fprintf(stdout, "BR Appendix A(3): key modulus must be a minimum of %s "
-                    "bits (is %u bits)\n", minimumStrengthStr,
-                    strengthInBits);
+    fprintf(stdout, "PASS: is %u\n", strengthInBits);
   }
 
-  //key->u.rsa.modulus
   // TODO: need arbitrary length integer arithmetic library to do this right
+  fprintf(stderr, "BR Appendix A(4): public exponent must be an odd "
+                  "number equal to 3 or more. It should be at least "
+                  "65537: ");
   long pubExp = DER_GetInteger(&key->u.rsa.publicExponent);
   if (pubExp == -1) {
     fprintf(stderr, "Error decoding public exponent: %d\n", PORT_GetError());
   } else {
     if (pubExp < 3 || pubExp % 2 == 0) {
-      fprintf(stderr, "BR Appendix A(4): public exponent must be an odd "
-                      "number equal to 3 or more. It should be at least "
-                      "65537 (it is %ld)\n", pubExp);
+      fprintf(stderr, "FAIL: is %ld\n", pubExp);
+    } else if (pubExp < 65537) {
+      fprintf(stderr, "WARN: is %ld\n", pubExp);
     } else {
-      fprintf(stdout, "BR Appendix A(4): public exponent must be an odd "
-                      "number equal to 3 or more. It should be at least "
-                      "65537 (it is %ld)\n", pubExp);
+      fprintf(stderr, "PASS: is %ld\n", pubExp);
     }
   }
 }
@@ -238,51 +268,63 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // (TODO)
 
   // BR #9.1.3 - issuer:organizationName present
+  fprintf(stdout, "BR #9.1.3: issuer:organizationName present: ");
   char *org = CERT_GetOrgName(&cert->issuer);
   if (!org) {
-    fprintf(stderr, "BR #9.1.3 (issuer:organizationName present) violated!\n");
+    fprintf(stdout, "FAIL: not present\n");
   } else {
-    fprintf(stdout, "BR #9.1.3 (issuer:organizationName present): %s\n", org);
+    fprintf(stdout, "PASS: present: %s\n", org);
     free(org);
   }
 
   // BR #9.1.4 - issuer:countryName present
+  fprintf(stdout, "BR #9.1.4: issuer:countryName present: ");
   char *country = CERT_GetCountryName(&cert->issuer);
   if (!country) {
-    fprintf(stderr, "BR #9.1.4 (issuer:countryName present) violated!\n");
+    fprintf(stdout, "FAIL: not present\n");
   } else {
-    fprintf(stdout, "BR #9.1.4 (issuer:countryName present): %s\n", country);
+    fprintf(stdout, "PASS: present: %s\n", country);
     free(country);
   }
 
   // BR #9.2.1 - extensions:subjectAltName contains at least one entry
   // TODO: there are more requirements
+  fprintf(stdout, "BR #9.2.1: extensions:subjectAltName contains at least "
+                  "one entry: ");
   SECItem subjectAltName;
   SECStatus status = CERT_FindCertExtension(cert, SEC_OID_X509_SUBJECT_ALT_NAME,
                                             &subjectAltName);
   CERTGeneralName *nameList = NULL;
   if (status != SECSuccess) {
-    fprintf(stderr, "BR #9.2.1 (extensions:subjectAltName contains at least "
-                    "one entry) violated!\n");
+    fprintf(stdout, "FAIL\n");
   } else {
     PLArenaPool *arena = PORT_NewArena(DER_DEFAULT_CHUNKSIZE);
     nameList = CERT_DecodeAltNameExtension(arena, &subjectAltName);
     if (!nameList) {
-      fprintf(stderr, "BR #9.2.1 (extensions:subjectAltName contains at least "
-                      "one entry) violated!\n");
+      fprintf(stdout, "FAIL\n");
     } else {
-      fprintf(stdout, "BR #9.2.1 (extensions:subjectAltName contains at least "
-                      "one entry): true\n");
+      fprintf(stdout, "PASS\n");
+      fprintf(stdout, "BR #9.2.1: each extensions:subjectAltName entry "
+                      "must be a DNS name or an IP address: ");
+      int improperSubjectAltNameEntries = 0;
       CERTGeneralName *first = nameList;
       do {
         if (nameList->type != certDNSName && nameList->type != certIPAddress) {
-          fprintf(stderr, "BR #9.2.1 (each extensions:subjectAltName entry "
-                          "must be a DNS name or an IP address: is %d)\n",
-                          nameList->type); // see CERTGeneralNameType
-        } else {
-          fprintf(stdout, "BR #9.2.1 (extensions:subjectAltName found ");
+          // see CERTGeneralNameType to figure out what type this is (TODO)
+          fprintf(stdout, "FAIL: found type %d\n", nameList->type);
+          improperSubjectAltNameEntries++;
+        }
+        nameList = CERT_GetNextGeneralName(nameList);
+      } while (nameList != first);
+      nameList = first;
+      if (improperSubjectAltNameEntries == 0) {
+        fprintf(stdout, "PASS\n");
+      }
+      do {
+        if (nameList->type != certDNSName && nameList->type != certIPAddress) {
+          fprintf(stdout, "extensions:subjectAltName: found ");
           print_general_name(nameList);
-          fprintf(stdout, ")\n");
+          fprintf(stdout, "\n");
         }
         nameList = CERT_GetNextGeneralName(nameList);
       } while (nameList != first);
@@ -295,27 +337,21 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.2.2 - subject:commonName deprecated (if present, must contain a
   // single IP address or FQDN that is one of the values contained in the
   // subjectAltName extension
+  fprintf(stdout, "BR #9.2.2: subject:commonName is deprecated: ");
   char *commonName = CERT_GetCommonName(&cert->subject);
   if (commonName) {
-    fprintf(stderr, "BR #9.2.2 (subject:commonName is deprecated: %s)\n",
-            commonName);
+    fprintf(stdout, "WARN: common name present: %s\n", commonName);
+    fprintf(stdout, "BR #9.2.2: subject:commonName if present, must match "
+                    "one of the values in the subjectAltName extension: ");
     status = cert_VerifySubjectAltName(cert, commonName);
     if (status != SECSuccess) {
-      fprintf(stderr, "BR #9.2.2 (subject:commonName if present, must match "
-                      "one of the values in the subjectAltName extension");
-      if (nameList) {
-        fprintf(stderr, ": couldn't find a match)\n");
-      } else {
-        fprintf(stderr, ": subjectAltName extension not present)\n");
-      }
+      fprintf(stdout, "FAIL\n");
     } else {
-      fprintf(stdout, "BR #9.2.2 (subject:commonName matches one of the values "
-                      "in the subjectAltName extension)\n");
+      fprintf(stdout, "PASS\n");
     }
-    free(commonName);
+    PORT_Free(commonName);
   } else {
-    fprintf(stdout, "BR #9.2.2 (subject:commonName is deprecated: "
-            "not present)\n");
+    fprintf(stdout, "PASS\n");
   }
 
   // BR #9.2.3 - subject:domainComponent optional (if present...)
@@ -335,50 +371,30 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // If the Certificate asserts the policy identifier of 2.23.140.1.2.2,
   // then it MUST also include organizationName, localityName,
   // stateOrProvinceName (if applicable), and countryName in the Subject field.
-  SECItem policyItem;
-  CERTCertificatePolicies *policies;
-  status = CERT_FindCertExtension(cert, SEC_OID_X509_CERTIFICATE_POLICIES,
-                                  &policyItem);
-  if (status != SECSuccess) {
-    fprintf(stdout, "BR #9.3.1 - no policies found. Not applicable.\n");
-  } else {
-    policies = CERT_DecodeCertificatePoliciesExtension(&policyItem);
-    if (!policies) {
-      fprintf(stderr, "error decoding certificate policies extension\n");
+  if (certificate_has_policy(cert, "OID.2.23.140.1.2.1")) {
+    fprintf(stdout, "BR #9.3.1 - found policy 2.23.140.1.2.1: must not "
+            "include organizationName, streetAddress, localityName, "
+            "stateOrProvinceName, or postalCode in the Subject field: ");
+    int fieldsPresent = check_subject_for(cert);
+    if (fieldsPresent != 0) {
+      fprintf(stdout, "FAIL\n");
     } else {
-      CERTPolicyInfo **policyInfos = policies->policyInfos;
-      while (*policyInfos != NULL) {
-        char *oidString = CERT_GetOidString(&(*policyInfos)->policyID);
-        if (strcmp(oidString, "OID.2.23.140.1.2.1") == 0) {
-          fprintf(stdout, "BR #9.3.1 - found policy %s (must not include "
-                  "organizationName, streetAddress, localityName, "
-                  "stateOrProvinceName, or postalCode in the Subject field) ",
-                  oidString);
-          int fieldsPresent = check_subject_for(cert);
-          if (fieldsPresent > 0) {
-            fprintf(stderr, "violated!\n");
-          } else {
-            fprintf(stdout, "not present\n");
-          }
-        } else if (strcmp(oidString, "OID.2.23.140.1.2.2") == 0) {
-          fprintf(stdout, "BR #9.3.1 - found policy %s (must include "
-                  "organizationName, streetAddress, localityName, "
-                  "stateOrProvinceName, and postalCode in the Subject field)\n",
-                  oidString);
-          int fieldsPresent = check_subject_for(cert);
-          if (fieldsPresent != 3) { // TODO: will be 5
-            fprintf(stderr, " violated!\n");
-          } else {
-            fprintf(stderr, " all present\n");
-          }
-        }
-        PR_smprintf_free(oidString);
-        policyInfos++;
-      }
-      CERT_DestroyCertificatePoliciesExtension(policies);
+      fprintf(stdout, "PASS\n");
     }
-    PORT_Free(policyItem.data);
+  } else if (certificate_has_policy(cert, "OID.2.23.140.1.2.2")) {
+    fprintf(stdout, "BR #9.3.1 - found policy 2.23.140.1.2.1: must "
+            "include organizationName, streetAddress, localityName, "
+            "stateOrProvinceName, and postalCode in the Subject field: ");
+    int fieldsPresent = check_subject_for(cert);
+    if (fieldsPresent != 3) { // TODO this isn't even right
+      fprintf(stdout, "FAIL\n");
+    } else {
+      fprintf(stdout, "PASS\n");
+    }
+  } else {
+    fprintf(stdout, "BR #9.3.1: not applicable (no policies found): PASS\n");
   }
+
   check_key_requirements(cert);
 }
 
