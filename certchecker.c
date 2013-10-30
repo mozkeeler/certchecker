@@ -274,7 +274,7 @@ void check_baseline_requirements(CERTCertificate *cert) {
     fprintf(stdout, "FAIL: not present\n");
   } else {
     fprintf(stdout, "PASS: present: %s\n", org);
-    free(org);
+    PORT_Free(org);
   }
 
   // BR #9.1.4 - issuer:countryName present
@@ -284,7 +284,7 @@ void check_baseline_requirements(CERTCertificate *cert) {
     fprintf(stdout, "FAIL: not present\n");
   } else {
     fprintf(stdout, "PASS: present: %s\n", country);
-    free(country);
+    PORT_Free(country);
   }
 
   // BR #9.2.1 - extensions:subjectAltName contains at least one entry
