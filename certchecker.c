@@ -10,6 +10,15 @@
 
 #include "nss_private.h"
 
+void print_time(PRTime aTime) {
+  PRExplodedTime exploded;
+  PR_ExplodeTime(aTime, PR_GMTParameters, &exploded);
+  char buf[1024];
+  memset(buf, 0, sizeof(buf));
+  PR_FormatTime(buf, sizeof(buf) - 1, "%a %b %d %H:%M:%S %Y", &exploded);
+  fprintf(stdout, "%s", buf);
+}
+
 char *read_file(const char *filename, size_t *length) {
   FILE *fp = fopen(filename, "r");
   if (!fp) {
@@ -372,7 +381,7 @@ void check_baseline_requirements(CERTCertificate *cert) {
   // then it MUST also include organizationName, localityName,
   // stateOrProvinceName (if applicable), and countryName in the Subject field.
   if (certificate_has_policy(cert, "OID.2.23.140.1.2.1")) {
-    fprintf(stdout, "BR #9.3.1 - found policy 2.23.140.1.2.1: must not "
+    fprintf(stdout, "BR #9.3.1: found policy 2.23.140.1.2.1: must not "
             "include organizationName, streetAddress, localityName, "
             "stateOrProvinceName, or postalCode in the Subject field: ");
     int fieldsPresent = check_subject_for(cert);
@@ -382,7 +391,7 @@ void check_baseline_requirements(CERTCertificate *cert) {
       fprintf(stdout, "PASS\n");
     }
   } else if (certificate_has_policy(cert, "OID.2.23.140.1.2.2")) {
-    fprintf(stdout, "BR #9.3.1 - found policy 2.23.140.1.2.1: must "
+    fprintf(stdout, "BR #9.3.1: found policy 2.23.140.1.2.1: must "
             "include organizationName, streetAddress, localityName, "
             "stateOrProvinceName, and postalCode in the Subject field: ");
     int fieldsPresent = check_subject_for(cert);
@@ -393,6 +402,39 @@ void check_baseline_requirements(CERTCertificate *cert) {
     }
   } else {
     fprintf(stdout, "BR #9.3.1: not applicable (no policies found): PASS\n");
+  }
+
+  // BR #9.4 - Validity Period
+  // BR #9.4.1 - Subscriber Certificates:
+  // Subscriber Certificates issued after the Effective Date (1 July 2012)
+  // MUST have a Validity Period of no greater than 60 months.
+  PRTime effectiveDate;
+  PRStatus rv = PR_ParseTimeString("1-JUL-2012 11:59 PM", PR_TRUE,
+                                   &effectiveDate);
+  if (rv != PR_SUCCESS) {
+    fprintf(stderr, "Error parsing time string. This shouldn't happen.\n");
+    exit(1);
+  }
+  PRTime notBefore;
+  PRTime notAfter;
+  status = CERT_GetCertTimes(cert, &notBefore, &notAfter);
+  if (status != SECSuccess) {
+    fprintf(stdout, "BR #9.4.1: Validity Period: FAIL: could not get "
+                    "validity period from certificate\n");
+  } else if (effectiveDate < notBefore) {
+    fprintf(stdout, "BR #9.4.1: certificate issued after Effective Date "
+                    "(1 July 2012): Validity Period must be <= 60 months: ");
+    PRTime difference = notAfter - notBefore;
+    // 60 months = 5 years = 5 * 365 days/year + 1 or 2 leap days (in general)
+    if (difference > ((5 * 365) + 2) * 24 * 60 * 60 * PR_USEC_PER_SEC) {
+      fprintf(stdout, "FAIL: ");
+    } else {
+      fprintf(stdout, "PASS: ");
+    }
+    print_time(notBefore);
+    fprintf(stdout, " -> ");
+    print_time(notAfter);
+    fprintf(stdout, "\n");
   }
 
   check_key_requirements(cert);

@@ -53,7 +53,7 @@ if [ -f "$OUTPUT_DIR/cert8.db" -o -f "$OUTPUT_DIR/key3.db" -o -f "$OUTPUT_DIR/se
 fi
 $RUN_MOZILLA $CERTUTIL -d $OUTPUT_DIR -N -f $PASSWORD_FILE
 
-COMMON_ARGS="-v 360 -w -1 -2 -z $NOISE_FILE -g 2048"
+COMMON_ARGS="-v 36 -w -1 -2 -z $NOISE_FILE -g 2048"
 
 function make_CA {
   CA_RESPONSES="y\n0\ny"
@@ -122,6 +122,7 @@ echo -e "n\n\ny\n2.23.140.1.2.2\n2\n\n\n\n\n" | $RUN_MOZILLA $CERTUTIL -S \
                                                              -t ",," \
                                                              -m 0 \
                                                              $COMMON_ARGS \
+                                                             -v 61 \
                                                              -g 1024 \
                                                              -y 3 \
                                                              --extCP
