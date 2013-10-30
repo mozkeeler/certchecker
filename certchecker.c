@@ -262,7 +262,7 @@ int check_subject_for(CERTCertificate *cert) {
 void check_baseline_requirements(CERTCertificate *cert) {
   // BR #9.1.1 - issuer:commonName optional
   // BR #9.1.2 - issuer:domainComponent optional (if present, must include
-  // all components if the issuing CA's registered domain name in ordered
+  // all components of the issuing CA's registered domain name in ordered
   // sequence, with the most significant component (closest to the root of the
   // namespace) written last)
   // (TODO)
